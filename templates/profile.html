@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% set page_title = "Profile" %}
+
+{% block title %}{{ page_title }} — Spendly{% endblock %}
+
+{% block content %}
+<div class="profile-page">
+
+  {# ── Page header ─────────────────────────────────────── #}
+  <div class="profile-header">
+    <div class="profile-header-inner">
+      <div class="profile-breadcrumb">
+        <i data-lucide="user" class="profile-breadcrumb-icon"></i>
+        <span>Account</span>
+      </div>
+      <h1 class="profile-title">My Profile</h1>
+      <p class="profile-subtitle">Your account overview and spending summary</p>
+    </div>
+  </div>
+
+  <div class="profile-body">
+
+    {# ── User info card ──────────────────────────────────── #}
+    <section class="profile-card profile-card-user">
+      <div class="profile-avatar">{{ user.initials }}</div>
+      <div class="profile-user-details">
+        <h2 class="profile-user-name">{{ user.name }}</h2>
+        <p class="profile-user-email">
+          <i data-lucide="mail" class="profile-detail-icon"></i>
+          {{ user.email }}
+        </p>
+        <p class="profile-user-since">
+          <i data-lucide="calendar" class="profile-detail-icon"></i>
+          Member since {{ user.member_since }}
+        </p>
+      </div>
+    </section>
+
+    {# ── Summary stats ─────────────────────────────────────── #}
+    <section class="profile-stats-row">
+      <div class="profile-stat">
+        <i data-lucide="indian-rupee" class="profile-stat-icon"></i>
+        <span class="profile-stat-value">₹{{ "%.0f"|format(stats.total_spent) }}</span>
+        <span class="profile-stat-label">Total Spent</span>
+      </div>
+      <div class="profile-stat">
+        <i data-lucide="receipt" class="profile-stat-icon"></i>
+        <span class="profile-stat-value">{{ stats.transaction_count }}</span>
+        <span class="profile-stat-label">Transactions</span>
+      </div>
+      <div class="profile-stat">
+        <i data-lucide="trending-up" class="profile-stat-icon"></i>
+        <span class="profile-stat-value">{{ stats.top_category }}</span>
+        <span class="profile-stat-label">Top Category</span>
+      </div>
+    </section>
+
+    {# ── Two-column: transactions + categories ────────────── #}
+    <div class="profile-columns">
+
+      {# Transaction history #}
+      <section class="profile-card profile-card-table">
+        <div class="profile-section-header">
+          <i data-lucide="clock" class="profile-section-icon"></i>
+          <h3 class="profile-section-title">Transaction History</h3>
+        </div>
+        <div class="profile-table-wrap">
+          <table class="profile-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th class="profile-table-amount">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for tx in transactions %}
+              <tr>
+                <td class="profile-td-date">{{ tx.date }}</td>
+                <td class="profile-td-desc">{{ tx.description }}</td>
+                <td><span class="badge badge-{{ tx.category|lower }}">{{ tx.category }}</span></td>
+                <td class="profile-table-amount">₹{{ "%.2f"|format(tx.amount) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {# Category breakdown #}
+      <section class="profile-card profile-card-categories">
+        <div class="profile-section-header">
+          <i data-lucide="pie-chart" class="profile-section-icon"></i>
+          <h3 class="profile-section-title">Spending by Category</h3>
+        </div>
+        <div class="category-list">
+          {% for cat in categories %}
+          <div class="category-row">
+            <div class="category-meta">
+              <span class="category-name">{{ cat.name }}</span>
+              <span class="category-amount">₹{{ "%.0f"|format(cat.amount) }}</span>
+            </div>
+            <div class="category-track">
+              <div class="category-bar category-bar-{{ loop.index }}" style="width: {{ cat.pct }}%"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+
+    </div>
+
+  </div>
+</div>
+{% endblock %}
