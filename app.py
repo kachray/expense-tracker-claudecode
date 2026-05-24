@@ -67,7 +67,7 @@ def login():
 
         session["user_id"] = user["id"]
         flash("Welcome back!", "success")
-        return redirect(url_for("landing"))
+        return redirect(url_for("profile"))
 
     return render_template("login.html")
 
@@ -95,7 +95,46 @@ def logout():
 
 @app.route("/profile")
 def profile():
-    return "Profile page — coming in Step 4"
+    if not session.get("user_id"):
+        flash("Please sign in to view your profile.", "error")
+        return redirect(url_for("login"))
+
+    user = {
+        "name": "Priya Sharma",
+        "email": "priya@example.com",
+        "member_since": "April 2026",
+        "initials": "PS",
+    }
+
+    stats = {
+        "total_spent": 3620.00,
+        "transaction_count": 8,
+        "top_category": "Bills",
+    }
+
+    transactions = [
+        {"date": "Apr 8, 2026", "description": "Miscellaneous", "category": "Other",         "amount": 200.00},
+        {"date": "Apr 8, 2026", "description": "Lunch with colleagues", "category": "Food",    "amount": 180.00},
+        {"date": "Apr 7, 2026", "description": "New earphones",        "category": "Shopping",  "amount": 800.00},
+        {"date": "Apr 6, 2026", "description": "Movie tickets",        "category": "Entertainment", "amount": 500.00},
+        {"date": "Apr 5, 2026", "description": "Pharmacy — vitamins",  "category": "Health",   "amount": 350.00},
+    ]
+
+    categories = [
+        {"name": "Bills",         "amount": 1200.00, "pct": 33},
+        {"name": "Shopping",       "amount":  800.00, "pct": 22},
+        {"name": "Food",          "amount":  630.00, "pct": 17},
+        {"name": "Entertainment",  "amount":  500.00, "pct": 14},
+        {"name": "Transport",      "amount":  120.00, "pct":  3},
+    ]
+
+    return render_template(
+        "profile.html",
+        user=user,
+        stats=stats,
+        transactions=transactions,
+        categories=categories,
+    )
 
 
 @app.route("/expenses/add")
