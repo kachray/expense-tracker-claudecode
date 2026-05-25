@@ -59,6 +59,76 @@ def get_user_by_email(email):
     return user
 
 
+def get_user_by_id(user_id):
+    conn = get_db()
+    user = conn.execute(
+        "SELECT id, name, email, created_at FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return dict(user) if user else None
+
+
+def get_expenses_by_user(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT strftime('%b %d, %Y', date) as date, description, category, amount "
+        "FROM expenses WHERE user_id = ? ORDER BY date DESC, id DESC",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_total_spent(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return round(float(row[0]), 2)
+
+
+def get_expense_count(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM expenses WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return int(row[0])
+
+
+def get_top_category(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? "
+        "GROUP BY category ORDER BY total DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    return row["category"] if row else "None"
+
+
+def get_category_breakdown(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? "
+        "GROUP BY category ORDER BY total DESC",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    total = sum(float(row["total"]) for row in rows)
+    if not rows:
+        return []
+    return [
+        {
+            "name": row["category"],
+            "amount": round(float(row["total"]), 2),
+            "pct": round(float(row["total"]) / total * 100, 1),
+        }
+        for row in rows
+    ]
+
+
 def seed_db():
     conn = get_db()
 

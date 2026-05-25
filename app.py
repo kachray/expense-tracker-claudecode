@@ -3,7 +3,19 @@ import sqlite3
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from database.db import create_user, get_db, get_user_by_email, init_db, seed_db
+from database.db import (
+    create_user,
+    get_category_breakdown,
+    get_db,
+    get_expense_count,
+    get_expenses_by_user,
+    get_total_spent,
+    get_top_category,
+    get_user_by_email,
+    get_user_by_id,
+    init_db,
+    seed_db,
+)
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key"
@@ -99,34 +111,28 @@ def profile():
         flash("Please sign in to view your profile.", "error")
         return redirect(url_for("login"))
 
+    user_id = session["user_id"]
+    db_user = get_user_by_id(user_id)
+
+    name_parts = db_user["name"].split()
+    initials = "".join(part[0] for part in name_parts[:2]).upper()
+    member_since = db_user["created_at"][:7]  # "YYYY-MM"
+
     user = {
-        "name": "Priya Sharma",
-        "email": "priya@example.com",
-        "member_since": "April 2026",
-        "initials": "PS",
+        "name": db_user["name"],
+        "email": db_user["email"],
+        "member_since": member_since,
+        "initials": initials,
     }
 
     stats = {
-        "total_spent": 3620.00,
-        "transaction_count": 8,
-        "top_category": "Bills",
+        "total_spent": get_total_spent(user_id),
+        "transaction_count": get_expense_count(user_id),
+        "top_category": get_top_category(user_id),
     }
 
-    transactions = [
-        {"date": "Apr 8, 2026", "description": "Miscellaneous", "category": "Other",         "amount": 200.00},
-        {"date": "Apr 8, 2026", "description": "Lunch with colleagues", "category": "Food",    "amount": 180.00},
-        {"date": "Apr 7, 2026", "description": "New earphones",        "category": "Shopping",  "amount": 800.00},
-        {"date": "Apr 6, 2026", "description": "Movie tickets",        "category": "Entertainment", "amount": 500.00},
-        {"date": "Apr 5, 2026", "description": "Pharmacy — vitamins",  "category": "Health",   "amount": 350.00},
-    ]
-
-    categories = [
-        {"name": "Bills",         "amount": 1200.00, "pct": 33},
-        {"name": "Shopping",       "amount":  800.00, "pct": 22},
-        {"name": "Food",          "amount":  630.00, "pct": 17},
-        {"name": "Entertainment",  "amount":  500.00, "pct": 14},
-        {"name": "Transport",      "amount":  120.00, "pct":  3},
-    ]
+    transactions = get_expenses_by_user(user_id)
+    categories = get_category_breakdown(user_id)
 
     return render_template(
         "profile.html",
