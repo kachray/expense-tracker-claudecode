@@ -68,53 +68,80 @@ def get_user_by_id(user_id):
     return dict(user) if user else None
 
 
-def get_expenses_by_user(user_id):
+def get_expenses_by_user(user_id, start_date=None, end_date=None):
     conn = get_db()
-    rows = conn.execute(
-        "SELECT strftime('%b %d, %Y', date) as date, description, category, amount "
-        "FROM expenses WHERE user_id = ? ORDER BY date DESC, id DESC",
-        (user_id,)
-    ).fetchall()
+    sql = "SELECT strftime('%b %d, %Y', date) as date, description, category, amount FROM expenses WHERE user_id = ?"
+    params = [user_id]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date DESC, id DESC"
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 
-def get_total_spent(user_id):
+def get_total_spent(user_id, start_date=None, end_date=None):
     conn = get_db()
-    row = conn.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = ?", (user_id,)
-    ).fetchone()
+    sql = "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = ?"
+    params = [user_id]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    row = conn.execute(sql, params).fetchone()
     conn.close()
     return round(float(row[0]), 2)
 
 
-def get_expense_count(user_id):
+def get_expense_count(user_id, start_date=None, end_date=None):
     conn = get_db()
-    row = conn.execute(
-        "SELECT COUNT(*) FROM expenses WHERE user_id = ?", (user_id,)
-    ).fetchone()
+    sql = "SELECT COUNT(*) FROM expenses WHERE user_id = ?"
+    params = [user_id]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    row = conn.execute(sql, params).fetchone()
     conn.close()
     return int(row[0])
 
 
-def get_top_category(user_id):
+def get_top_category(user_id, start_date=None, end_date=None):
     conn = get_db()
-    row = conn.execute(
-        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? "
-        "GROUP BY category ORDER BY total DESC LIMIT 1",
-        (user_id,)
-    ).fetchone()
+    sql = "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ?"
+    params = [user_id]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " GROUP BY category ORDER BY total DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
     conn.close()
     return row["category"] if row else "None"
 
 
-def get_category_breakdown(user_id):
+def get_category_breakdown(user_id, start_date=None, end_date=None):
     conn = get_db()
-    rows = conn.execute(
-        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? "
-        "GROUP BY category ORDER BY total DESC",
-        (user_id,)
-    ).fetchall()
+    sql = "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ?"
+    params = [user_id]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " GROUP BY category ORDER BY total DESC"
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     total = sum(float(row["total"]) for row in rows)
     if not rows:

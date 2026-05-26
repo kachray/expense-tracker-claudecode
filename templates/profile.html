@@ -20,6 +20,30 @@
 
   <div class="profile-body">
 
+    {# ── Date filter bar ─────────────────────────────────── #}
+    <div class="profile-filter-bar">
+      <form method="get" action="{{ request.path }}" class="profile-filter-form">
+        <div class="filter-field">
+          <label for="start_date">From</label>
+          <input type="date" id="start_date" name="start_date" value="{{ request.args.get('start_date', '') }}">
+        </div>
+        <div class="filter-field">
+          <label for="end_date">To</label>
+          <input type="date" id="end_date" name="end_date" value="{{ request.args.get('end_date', '') }}">
+        </div>
+        <button type="submit" class="btn-filter">Filter</button>
+        <a href="{{ request.path }}" class="btn-clear">Clear</a>
+      </form>
+      {% if request.args.get('start_date') or request.args.get('end_date') %}
+      <p class="profile-filter-note">
+        Showing
+        {% if request.args.get('start_date') %}<strong>{{ request.args.get('start_date') }}</strong>{% endif %}
+        {% if request.args.get('start_date') and request.args.get('end_date') %} — {% endif %}
+        {% if request.args.get('end_date') %}<strong>{{ request.args.get('end_date') }}</strong>{% endif %}
+      </p>
+      {% endif %}
+    </div>
+
     {# ── User info card ──────────────────────────────────── #}
     <section class="profile-card profile-card-user">
       <div class="profile-avatar">{{ user.initials }}</div>

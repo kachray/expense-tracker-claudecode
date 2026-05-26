@@ -125,14 +125,17 @@ def profile():
         "initials": initials,
     }
 
+    start_date = request.args.get("start_date") or None
+    end_date = request.args.get("end_date") or None
+
     stats = {
-        "total_spent": get_total_spent(user_id),
-        "transaction_count": get_expense_count(user_id),
-        "top_category": get_top_category(user_id),
+        "total_spent": get_total_spent(user_id, start_date, end_date),
+        "transaction_count": get_expense_count(user_id, start_date, end_date),
+        "top_category": get_top_category(user_id, start_date, end_date),
     }
 
-    transactions = get_expenses_by_user(user_id)
-    categories = get_category_breakdown(user_id)
+    transactions = get_expenses_by_user(user_id, start_date, end_date)
+    categories = get_category_breakdown(user_id, start_date, end_date)
 
     return render_template(
         "profile.html",
@@ -140,6 +143,7 @@ def profile():
         stats=stats,
         transactions=transactions,
         categories=categories,
+        request=request,
     )
 
 
