@@ -52,6 +52,17 @@ spendly/
 
 ---
 
+## Subagent Policy
+- Always use a builtin explore subagent for codebase exploration 
+  before implementing any new feature
+- Always use a subagent to verify test results 
+  after any implementation
+- When asked to plan, delegate codebase research 
+  to a subagent before presenting the plan
+- always use a builtin plan subagent in plan mode
+
+---
+
 ## Commands
 ```bash
 # Setup
