@@ -50,6 +50,18 @@ def create_user(name, email, password):
     return user_id
 
 
+def create_expense(user_id, amount, category, date, description):
+    conn = get_db()
+    cursor = conn.execute(
+        "INSERT INTO expenses (user_id, amount, category, date, description) VALUES (?, ?, ?, ?, ?)",
+        (user_id, amount, category, date, description or None),
+    )
+    conn.commit()
+    expense_id = cursor.lastrowid
+    conn.close()
+    return expense_id
+
+
 def get_user_by_email(email):
     conn = get_db()
     user = conn.execute(

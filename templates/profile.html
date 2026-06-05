@@ -73,7 +73,10 @@
 
             <!-- Transaction history table -->
             <div class="profile-section">
-                <h2 class="section-title">Recent Transactions</h2>
+                <div class="section-header">
+                    <h2 class="section-title">Recent Transactions</h2>
+                    <a href="{{ url_for('add_expense') }}" class="btn-ghost btn-sm">+ Add Expense</a>
+                </div>
                 <div class="tx-table-wrapper">
                     <table class="tx-table">
                         <thead>
@@ -109,7 +112,9 @@
 
             <!-- Category breakdown -->
             <div class="profile-section">
-                <h2 class="section-title">By Category</h2>
+                <div class="section-header">
+                    <h2 class="section-title">By Category</h2>
+                </div>
                 <div class="category-list">
                     {% for cat in categories %}
                     <div class="cat-row">

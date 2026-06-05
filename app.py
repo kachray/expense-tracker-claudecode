@@ -5,7 +5,7 @@ from datetime import date, datetime
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from database.db import create_user, get_db, get_user_by_email, init_db, seed_db
+from database.db import create_expense, create_user, get_db, get_user_by_email, init_db, seed_db
 from database.queries import (
     get_category_breakdown,
     get_recent_transactions,
@@ -156,9 +156,64 @@ def profile():
     )
 
 
-@app.route("/expenses/add")
+VALID_CATEGORIES = ["Food", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other"]
+
+
+@app.route("/expenses/add", methods=["GET", "POST"])
 def add_expense():
-    return "Add expense — coming in Step 7"
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        amount_raw = request.form.get("amount", "").strip()
+        category = request.form.get("category", "").strip()
+        date_val = request.form.get("date", "").strip()
+        description = request.form.get("description", "").strip()
+
+        errors = []
+
+        # amount: required, must be positive number
+        try:
+            amount = float(amount_raw)
+            if amount <= 0:
+                errors.append("Amount must be greater than zero.")
+        except ValueError:
+            errors.append("Please enter a valid amount.")
+
+        # category: required, must be one of the 7
+        if category not in VALID_CATEGORIES:
+            errors.append("Please select a valid category.")
+
+        # date: required, must be valid YYYY-MM-DD, not in future
+        try:
+            dt = datetime.strptime(date_val, "%Y-%m-%d")
+            if dt.date() > date.today():
+                errors.append("Date cannot be in the future.")
+        except (ValueError, TypeError):
+            errors.append("Please select a valid date.")
+
+        # description: optional, store None if blank
+        description = description if description else None
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            return render_template(
+                "add_expense.html",
+                values={
+                    "amount": amount_raw,
+                    "category": category,
+                    "date": date_val,
+                    "description": description or "",
+                },
+            )
+
+        create_expense(session["user_id"], amount, category, date_val, description)
+        flash("Expense added successfully.", "success")
+        return redirect(url_for("profile"))
+
+    # GET: default date to today
+    return render_template("add_expense.html", values={"date": date.today().isoformat()})
 
 
 @app.route("/expenses/<int:id>/edit")
