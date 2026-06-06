@@ -8,9 +8,11 @@ from werkzeug.security import check_password_hash
 from database.db import create_expense, create_user, get_db, get_user_by_email, init_db, seed_db
 from database.queries import (
     get_category_breakdown,
+    get_expense_by_id,
     get_recent_transactions,
     get_summary_stats,
     get_user_by_id,
+    update_expense,
 )
 
 app = Flask(__name__)
@@ -216,9 +218,56 @@ def add_expense():
     return render_template("add_expense.html", values={"date": date.today().isoformat()})
 
 
-@app.route("/expenses/<int:id>/edit")
+@app.route("/expenses/<int:id>/edit", methods=["GET", "POST"])
 def edit_expense(id):
-    return "Edit expense — coming in Step 8"
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+
+    if request.method == "POST":
+        amount_raw = request.form.get("amount", "").strip()
+        category = request.form.get("category", "").strip()
+        date_val = request.form.get("date", "").strip()
+        description = request.form.get("description", "").strip()
+
+        errors = []
+        try:
+            amount = float(amount_raw)
+            if amount <= 0:
+                errors.append("Amount must be greater than zero.")
+        except ValueError:
+            errors.append("Please enter a valid amount.")
+        if category not in VALID_CATEGORIES:
+            errors.append("Please select a valid category.")
+        try:
+            dt = datetime.strptime(date_val, "%Y-%m-%d")
+            if dt.date() > date.today():
+                errors.append("Date cannot be in the future.")
+        except (ValueError, TypeError):
+            errors.append("Please select a valid date.")
+
+        description = description if description else None
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            expense = get_expense_by_id(id, uid)
+            if expense is None:
+                flash("Expense not found.", "error")
+                return redirect(url_for("profile"))
+            return render_template("edit_expense.html", expense=expense, categories=VALID_CATEGORIES)
+
+        update_expense(id, uid, amount, category, date_val, description)
+        flash("Expense updated successfully.", "success")
+        return redirect(url_for("profile"))
+
+    # GET
+    expense = get_expense_by_id(id, uid)
+    if expense is None:
+        flash("Expense not found or access denied.", "error")
+        return redirect(url_for("profile"))
+    return render_template("edit_expense.html", expense=expense, categories=VALID_CATEGORIES)
 
 
 @app.route("/expenses/<int:id>/delete")
