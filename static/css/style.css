@@ -295,6 +295,16 @@ a { color: inherit; text-decoration: none; }
     color: var(--ink);
 }
 
+.btn-danger {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.btn-danger:hover {
+    background: var(--danger);
+    color: var(--paper);
+}
+
 /* ------------------------------------------------------------------ */
 /* Features section                                                    */
 /* ------------------------------------------------------------------ */
