@@ -295,6 +295,17 @@ a { color: inherit; text-decoration: none; }
     color: var(--ink);
 }
 
+.btn-danger {
+    color: #c0392b;
+    border-color: #e8b4b4;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+    border-color: #c0392b;
+    color: #fff;
+}
+
 /* ------------------------------------------------------------------ */
 /* Features section                                                    */
 /* ------------------------------------------------------------------ */

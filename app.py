@@ -7,6 +7,7 @@ from werkzeug.security import check_password_hash
 
 from database.db import create_expense, create_user, get_db, get_user_by_email, init_db, seed_db
 from database.queries import (
+    delete_expense_record,
     get_category_breakdown,
     get_expense_by_id,
     get_recent_transactions,
@@ -270,9 +271,20 @@ def edit_expense(id):
     return render_template("edit_expense.html", expense=expense, categories=VALID_CATEGORIES)
 
 
-@app.route("/expenses/<int:id>/delete")
+@app.route("/expenses/<int:id>/delete", methods=["POST"])
 def delete_expense(id):
-    return "Delete expense — coming in Step 9"
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    expense = get_expense_by_id(id, uid)
+    if expense is None:
+        flash("Expense not found or access denied.", "error")
+        return redirect(url_for("profile"))
+
+    delete_expense_record(id, uid)
+    flash("Expense deleted successfully.", "success")
+    return redirect(url_for("profile"))
 
 
 if __name__ == '__main__':
