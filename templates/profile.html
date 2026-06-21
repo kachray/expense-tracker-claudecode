@@ -78,6 +78,12 @@
                 <div class="section-header">
                     <h2 class="section-title">Recent Transactions</h2>
                     <a href="{{ url_for('add_expense') }}" class="btn-ghost btn-sm">+ Add Expense</a>
+                    <form action="{{ url_for('clear_all_expenses') }}" method="POST" style="display:inline;">
+                        <button type="submit" class="btn-ghost btn-sm btn-danger"
+                                onclick="return confirm('Are you sure you want to delete all expenses? This cannot be undone.')">
+                            Clear All Expenses
+                        </button>
+                    </form>
                 </div>
                 <div class="tx-table-wrapper">
                     <table class="tx-table">
