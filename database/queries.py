@@ -72,6 +72,16 @@ def delete_expense_record(expense_id, user_id):
     conn.close()
 
 
+def delete_all_expenses_for_user(user_id):
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM expenses WHERE user_id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_recent_transactions(user_id, limit=10, date_from=None, date_to=None, search=None):
     date_clause, date_params = _build_date_filter(date_from, date_to)
     search_clause, search_params = _build_search_filter(search)

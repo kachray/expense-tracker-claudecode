@@ -2,11 +2,12 @@ import calendar
 import sqlite3
 from datetime import date, datetime
 
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
 from database.db import create_expense, create_user, get_db, get_user_by_email, init_db, seed_db
 from database.queries import (
+    delete_all_expenses_for_user,
     delete_expense_record,
     get_category_breakdown,
     get_expense_by_id,
@@ -286,6 +287,20 @@ def delete_expense(id):
 
     delete_expense_record(id, uid)
     flash("Expense deleted successfully.", "success")
+    return redirect(url_for("profile"))
+
+
+@app.route("/expenses/clear", methods=["POST"])
+def clear_all_expenses():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    if request.method != "POST":
+        abort(405)
+
+    uid = session["user_id"]
+    delete_all_expenses_for_user(uid)
+    flash("All expenses cleared.", "success")
     return redirect(url_for("profile"))
 
 
