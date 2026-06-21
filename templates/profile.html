@@ -24,25 +24,27 @@
         <!-- Filter bar -->
         <div class="filter-bar">
             <div class="filter-presets">
-                <a href="{{ url_for('profile') }}"
+                <a href="{{ url_for('profile', q=search or '') }}"
                    class="filter-preset-btn{% if not date_from and not date_to %} filter-preset-btn--active{% endif %}">
                     All Time
                 </a>
-                <a href="{{ url_for('profile', date_from=presets.this_month.date_from, date_to=presets.this_month.date_to) }}"
+                <a href="{{ url_for('profile', date_from=presets.this_month.date_from, date_to=presets.this_month.date_to, q=search or '') }}"
                    class="filter-preset-btn{% if date_from == presets.this_month.date_from and date_to == presets.this_month.date_to %} filter-preset-btn--active{% endif %}">
                     This Month
                 </a>
-                <a href="{{ url_for('profile', date_from=presets.last_3.date_from, date_to=presets.last_3.date_to) }}"
+                <a href="{{ url_for('profile', date_from=presets.last_3.date_from, date_to=presets.last_3.date_to, q=search or '') }}"
                    class="filter-preset-btn{% if date_from == presets.last_3.date_from and date_to == presets.last_3.date_to %} filter-preset-btn--active{% endif %}">
                     Last 3 Months
                 </a>
-                <a href="{{ url_for('profile', date_from=presets.last_6.date_from, date_to=presets.last_6.date_to) }}"
+                <a href="{{ url_for('profile', date_from=presets.last_6.date_from, date_to=presets.last_6.date_to, q=search or '') }}"
                    class="filter-preset-btn{% if date_from == presets.last_6.date_from and date_to == presets.last_6.date_to %} filter-preset-btn--active{% endif %}">
                     Last 6 Months
                 </a>
             </div>
             <div class="filter-divider"></div>
             <form class="filter-form" method="GET" action="{{ url_for('profile') }}">
+                <input type="text" name="q" class="filter-search-input"
+                       value="{{ search or '' }}" placeholder="Search expenses...">
                 <input type="date" name="date_from" class="filter-date-input"
                        value="{{ date_from or '' }}">
                 <span class="filter-to-label">to</span>

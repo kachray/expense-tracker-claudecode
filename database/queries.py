@@ -9,6 +9,12 @@ def _build_date_filter(date_from, date_to):
     return "", []
 
 
+def _build_search_filter(search):
+    if search:
+        return "AND description LIKE '%' || ? || '%'", [search]
+    return "", []
+
+
 def get_user_by_id(user_id):
     conn = get_db()
     row = conn.execute(
@@ -66,9 +72,10 @@ def delete_expense_record(expense_id, user_id):
     conn.close()
 
 
-def get_recent_transactions(user_id, limit=10, date_from=None, date_to=None):
+def get_recent_transactions(user_id, limit=10, date_from=None, date_to=None, search=None):
     date_clause, date_params = _build_date_filter(date_from, date_to)
-    params = [user_id] + date_params + [limit]
+    search_clause, search_params = _build_search_filter(search)
+    params = [user_id] + date_params + search_params + [limit]
 
     conn = get_db()
     rows = conn.execute(
@@ -76,6 +83,8 @@ def get_recent_transactions(user_id, limit=10, date_from=None, date_to=None):
         "FROM expenses "
         "WHERE user_id = ? "
         + date_clause +
+        " "
+        + search_clause +
         " ORDER BY date DESC, id DESC "
         "LIMIT ?",
         params,
@@ -94,15 +103,18 @@ def get_recent_transactions(user_id, limit=10, date_from=None, date_to=None):
     ]
 
 
-def get_summary_stats(user_id, date_from=None, date_to=None):
+def get_summary_stats(user_id, date_from=None, date_to=None, search=None):
     date_clause, date_params = _build_date_filter(date_from, date_to)
-    params = [user_id] + date_params
+    search_clause, search_params = _build_search_filter(search)
+    params = [user_id] + date_params + search_params
 
     conn = get_db()
     row = conn.execute(
         "SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count "
         "FROM expenses WHERE user_id = ? "
-        + date_clause,
+        + date_clause +
+        " "
+        + search_clause,
         params,
     ).fetchone()
     total_value = row["total"]
@@ -111,6 +123,8 @@ def get_summary_stats(user_id, date_from=None, date_to=None):
     cat_row = conn.execute(
         "SELECT category FROM expenses WHERE user_id = ? "
         + date_clause +
+        " "
+        + search_clause +
         " GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1",
         params,
     ).fetchone()
@@ -123,9 +137,10 @@ def get_summary_stats(user_id, date_from=None, date_to=None):
     }
 
 
-def get_category_breakdown(user_id, date_from=None, date_to=None):
+def get_category_breakdown(user_id, date_from=None, date_to=None, search=None):
     date_clause, date_params = _build_date_filter(date_from, date_to)
-    params = [user_id] + date_params
+    search_clause, search_params = _build_search_filter(search)
+    params = [user_id] + date_params + search_params
 
     conn = get_db()
     rows = conn.execute(
@@ -133,6 +148,8 @@ def get_category_breakdown(user_id, date_from=None, date_to=None):
         "FROM expenses "
         "WHERE user_id = ? "
         + date_clause +
+        " "
+        + search_clause +
         " GROUP BY category "
         "ORDER BY total DESC",
         params,

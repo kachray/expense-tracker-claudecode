@@ -130,6 +130,7 @@ def profile():
 
     date_from = _parse_date(request.args.get("date_from"))
     date_to = _parse_date(request.args.get("date_to"))
+    search = request.args.get("q", "").strip() or None
 
     if date_from and date_to and date_from > date_to:
         flash("Start date must be before end date.", "error")
@@ -150,12 +151,13 @@ def profile():
     return render_template(
         "profile.html",
         user=get_user_by_id(uid),
-        stats=get_summary_stats(uid, date_from, date_to),
-        expenses=get_recent_transactions(uid, date_from=date_from, date_to=date_to),
-        categories=get_category_breakdown(uid, date_from, date_to),
+        stats=get_summary_stats(uid, date_from, date_to, search=search),
+        expenses=get_recent_transactions(uid, date_from=date_from, date_to=date_to, search=search),
+        categories=get_category_breakdown(uid, date_from, date_to, search=search),
         date_from=date_from,
         date_to=date_to,
         presets=presets,
+        search=search,
     )
 
 

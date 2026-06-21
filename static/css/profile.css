@@ -413,6 +413,21 @@
     background: var(--paper);
 }
 
+.filter-search-input {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    color: var(--ink);
+    background: var(--paper);
+    min-width: 160px;
+}
+
+.filter-search-input:focus {
+    outline: 2px solid var(--accent);
+    border-color: var(--accent);
+}
+
 .filter-to-label {
     font-size: 0.8rem;
     color: var(--ink-muted);
