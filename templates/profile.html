@@ -4,7 +4,7 @@
 {% block title %}My Profile — Spendly{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/profile.css') }}">
+<link rel="stylesheet" href="{{ url_for("static", filename="css/profile.css") }}">
 {% endblock %}
 
 {% block content %}
@@ -13,62 +13,63 @@
 
         <!-- User info card -->
         <div class="profile-header-card">
-            <div class="profile-avatar">{{ user.initials }}</div>
+            <div class="profile-avatar">{{ user.initials }} </div>
             <div class="profile-info">
-                <h1 class="profile-name">{{ user.name }}</h1>
-                <p class="profile-email">{{ user.email }}</p>
-                <p class="profile-since">Member since {{ user.member_since }}</p>
-            </div>
-        </div>
+                <h1 class="profile-name">{{ user.name }} </h1>
+                <p class="profile-email">{{ user.email }} </p>
+                <p class="profile-since">Member since {{ user.member_since }} </p>
+           </div>
+            <a href="{{ url_for("edit_profile") }}" class="btn-ghost btn-sm profile-edit-link">Edit Profile</a>
+       </div>
 
         <!-- Filter bar -->
         <div class="filter-bar">
             <div class="filter-presets">
-                <a href="{{ url_for('profile', q=search or '') }}"
+                <a href="{{ url_for("profile", q=search or "") }}"
                    class="filter-preset-btn{% if not date_from and not date_to %} filter-preset-btn--active{% endif %}">
                     All Time
-                </a>
-                <a href="{{ url_for('profile', date_from=presets.this_month.date_from, date_to=presets.this_month.date_to, q=search or '') }}"
+               </a>
+                <a href="{{ url_for("profile", date_from=presets.this_month.date_from, date_to=presets.this_month.date_to, q=search or "") }}"
                    class="filter-preset-btn{% if date_from == presets.this_month.date_from and date_to == presets.this_month.date_to %} filter-preset-btn--active{% endif %}">
                     This Month
-                </a>
-                <a href="{{ url_for('profile', date_from=presets.last_3.date_from, date_to=presets.last_3.date_to, q=search or '') }}"
+               </a>
+                <a href="{{ url_for("profile", date_from=presets.last_3.date_from, date_to=presets.last_3.date_to, q=search or "") }}"
                    class="filter-preset-btn{% if date_from == presets.last_3.date_from and date_to == presets.last_3.date_to %} filter-preset-btn--active{% endif %}">
                     Last 3 Months
-                </a>
-                <a href="{{ url_for('profile', date_from=presets.last_6.date_from, date_to=presets.last_6.date_to, q=search or '') }}"
+               </a>
+                <a href="{{ url_for("profile", date_from=presets.last_6.date_from, date_to=presets.last_6.date_to, q=search or "") }}"
                    class="filter-preset-btn{% if date_from == presets.last_6.date_from and date_to == presets.last_6.date_to %} filter-preset-btn--active{% endif %}">
                     Last 6 Months
-                </a>
-            </div>
-            <div class="filter-divider"></div>
-            <form class="filter-form" method="GET" action="{{ url_for('profile') }}">
+               </a>
+           </div>
+            <div class="filter-divider\</div>
+            <form class="filter-form" method="GET" action="{{ url_for("profile") }}">
                 <input type="text" name="q" class="filter-search-input"
-                       value="{{ search or '' }}" placeholder="Search expenses...">
+                       value="{{ search or "" }}" placeholder="Search expenses...">
                 <input type="date" name="date_from" class="filter-date-input"
-                       value="{{ date_from or '' }}">
+                       value="{{ date_from or "" }}">
                 <span class="filter-to-label">to</span>
                 <input type="date" name="date_to" class="filter-date-input"
-                       value="{{ date_to or '' }}">
+                       value="{{ date_to or "" }}">
                 <button type="submit" class="filter-apply-btn">Apply</button>
-            </form>
-        </div>
+           </form>
+       </div>
 
         <!-- Summary stats row -->
         <div class="profile-stats">
             <div class="stat-card">
                 <span class="stat-label">Total Spent</span>
-                <span class="stat-value">₹{{ stats.total }}</span>
-            </div>
+                <span class="stat-value">₹{{ stats.total }} </span>
+           </div>
             <div class="stat-card">
                 <span class="stat-label">Transactions</span>
-                <span class="stat-value">{{ stats.count }}</span>
-            </div>
+                <span class="stat-value">{{ stats.count }} </span>
+           </div>
             <div class="stat-card">
                 <span class="stat-label">Top Category</span>
-                <span class="stat-value">{{ stats.top_category }}</span>
-            </div>
-        </div>
+                <span class="stat-value">{{ stats.top_category }} </span>
+           </div>
+       </div>
 
         <!-- Transaction history + category breakdown -->
         <div class="profile-grid">
@@ -77,14 +78,14 @@
             <div class="profile-section">
                 <div class="section-header">
                     <h2 class="section-title">Recent Transactions</h2>
-                    <a href="{{ url_for('add_expense') }}" class="btn-ghost btn-sm">+ Add Expense</a>
-                    <form action="{{ url_for('clear_all_expenses') }}" method="POST" style="display:inline;">
+                    <a href="{{ url_for("add_expense") }}" class="btn-ghost btn-sm">+ Add Expense</a>
+                    <form action="{{ url_for("clear_all_expenses") }}" method="POST" style="display:inline;">
                         <button type="submit" class="btn-ghost btn-sm btn-danger"
-                                onclick="return confirm('Are you sure you want to delete all expenses? This cannot be undone.')">
+                                onclick="return confirm("Are you sure you want to delete all expenses? This cannot be undone.")">
                             Clear All Expenses
-                        </button>
-                    </form>
-                </div>
+                       </button>
+                   </form>
+               </div>
                 <div class="tx-table-wrapper">
                     <table class="tx-table">
                         <thead>
@@ -94,60 +95,60 @@
                                 <th>Category</th>
                                 <th class="tx-amount-col">Amount</th>
                                 <th>Actions</th>
-                            </tr>
-                        </thead>
+                           </tr>
+                       </thead>
                         <tbody>
                             {% for tx in expenses %}
                             <tr>
-                                <td class="tx-date">{{ tx.date }}</td>
-                                <td class="tx-desc">{{ tx.description }}</td>
+                                <td class="tx-date">{{ tx.date }} </td>
+                                <td class="tx-desc">{{ tx.description }} </td>
                                 <td>
                                     <span class="cat-badge cat-badge--{{ tx.category | lower }}">
                                         {{ tx.category }}
-                                    </span>
-                                </td>
-                                <td class="tx-amount">₹{{ tx.amount }}</td>
+                                   </span>
+                               </td>
+                                <td class="tx-amount">₹{{ tx.amount }} </td>
                                 <td>
-                                    <a href="{{ url_for('edit_expense', id=tx.id) }}" class="btn-ghost btn-sm">Edit</a>
-                                    <form action="{{ url_for('delete_expense', id=tx.id) }}" method="POST" style="display:inline;">
-                                        <button type="submit" class="btn-ghost btn-sm btn-danger" onclick="return confirm('Delete this expense?')">Delete</button>
-                                    </form>
-                                </td>
-                            </tr>
+                                    <a href="{{ url_for("edit_expense", id=tx.id) }}" class="btn-ghost btn-sm">Edit</a>
+                                    <form action="{{ url_for("delete_expense", id=tx.id) }}" method="POST" style="display:inline;">
+                                        <button type="submit" class="btn-ghost btn-sm btn-danger" onclick="return confirm("Delete this expense?")">Delete</button>
+                                   </form>
+                               </td>
+                           </tr>
                             {% endfor %}
                             {% if not expenses %}
                             <tr>
-                                <td colspan="5" class="tx-empty">No expenses found for this period.</td>
-                            </tr>
+                                <td colspan="5" class="tx-empty">No expenses found for this period</td>
+                           </tr>
                             {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                       </tbody>
+                   </table>
+               </div>
+           </div>
 
             <!-- Category breakdown -->
             <div class="profile-section">
                 <div class="section-header">
                     <h2 class="section-title">By Category</h2>
-                </div>
+               </div>
                 <div class="category-list">
                     {% for cat in categories %}
                     <div class="cat-row">
                         <div class="cat-row-header">
-                            <span class="cat-row-name">{{ cat.name }}</span>
-                            <span class="cat-row-amount">₹{{ cat.amount }}</span>
-                        </div>
+                            <span class="cat-row-name">{{ cat.name }} </span>
+                            <span class="cat-row-amount">₹{{ cat.amount }} </span>
+                       </div>
                         <div class="cat-bar-track">
                             <div class="cat-bar cat-bar--{{ cat.name | lower }}"
                                  style="width: {{ cat.percent }}%"></div>
-                        </div>
-                    </div>
+                       </div>
+                   </div>
                     {% endfor %}
-                </div>
-            </div>
+               </div>
+           </div>
 
-        </div>
+       </div>
 
-    </div>
+   </div>
 </div>
 {% endblock %}

@@ -5,7 +5,18 @@ from datetime import date, datetime
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from database.db import create_expense, create_user, get_db, get_user_by_email, init_db, seed_db
+from database.db import (
+    create_expense,
+    create_user,
+    get_db,
+    get_user_by_email,
+    get_user_by_email_for_update,
+    get_user_row_by_id,
+    init_db,
+    seed_db,
+    update_user_password,
+    update_user_profile,
+)
 from database.queries import (
     delete_all_expenses_for_user,
     delete_expense_record,
@@ -159,6 +170,96 @@ def profile():
         date_to=date_to,
         presets=presets,
         search=search,
+    )
+
+
+# ------------------------------------------------------------------ #
+# Edit Profile — Step 12                                              #
+# ------------------------------------------------------------------ #
+
+MIN_PASSWORD_LEN = 6
+
+
+@app.route("/profile/edit", methods=["GET", "POST"])
+def edit_profile():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    user_row = get_user_row_by_id(uid)
+    if user_row is None:
+        session.clear()
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip()
+        cur_pw = request.form.get("current_password", "")
+        new_pw = request.form.get("new_password", "")
+        conf_pw = request.form.get("confirm_password", "")
+        want_password_change = bool(new_pw)
+
+        errors = []
+
+        # Re-authenticate first — current password is required for any change
+        if not check_password_hash(user_row["password_hash"], cur_pw):
+            errors.append("Current password is incorrect.")
+
+        # Name
+        if not name:
+            errors.append("Name is required.")
+        elif len(name) > 80:
+            errors.append("Name must be 80 characters or fewer.")
+
+        # Email
+        if not email or "@" not in email or "." not in email:
+            errors.append("Please enter a valid email address.")
+        else:
+            collide = get_user_by_email_for_update(email, uid)
+            if collide is not None:
+                errors.append("Email already registered.")
+
+        # Password change — only validated when user opted in
+        if want_password_change:
+            if new_pw != conf_pw:
+                errors.append("New passwords do not match.")
+            elif len(new_pw) < MIN_PASSWORD_LEN:
+                errors.append(
+                    f"New password must be at least {MIN_PASSWORD_LEN} characters."
+                )
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            return render_template(
+                "edit_profile.html",
+                form={"name": name, "email": email},
+                want_password_change=want_password_change,
+            )
+
+        try:
+            update_user_profile(uid, name, email)
+        except sqlite3.IntegrityError:
+            flash("Email already registered.", "error")
+            return render_template(
+                "edit_profile.html",
+                form={"name": name, "email": email},
+                want_password_change=want_password_change,
+            )
+
+        if want_password_change:
+            update_user_password(uid, new_pw)
+
+        # Keep navbar greeting in sync with the new name
+        session["user_name"] = name
+        flash("Profile updated successfully.", "success")
+        return redirect(url_for("profile"))
+
+    # GET — render with current DB values
+    return render_template(
+        "edit_profile.html",
+        form={"name": user_row["name"], "email": user_row["email"]},
+        want_password_change=False,
     )
 
 
