@@ -71,6 +71,46 @@ def get_user_by_email(email):
     return user
 
 
+def get_user_row_by_id(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, name, email, password_hash FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_user_by_email_for_update(email, exclude_user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, name, email FROM users WHERE email = ? AND id != ?",
+        (email, exclude_user_id),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def update_user_profile(user_id, name, email):
+    conn = get_db()
+    conn.execute(
+        "UPDATE users SET name = ?, email = ? WHERE id = ?",
+        (name, email, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_user_password(user_id, new_password):
+    conn = get_db()
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (generate_password_hash(new_password), user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def seed_db():
     conn = get_db()
 
