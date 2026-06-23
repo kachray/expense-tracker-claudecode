@@ -6,14 +6,23 @@ from flask import Flask, abort, flash, redirect, render_template, request, sessi
 from werkzeug.security import check_password_hash
 
 from database.db import (
+    advance_recurring,
     create_expense,
+    create_recurring,
+    create_template,
     create_user,
+    delete_recurring,
+    delete_template,
     get_db,
+    get_recurring_by_id,
+    get_template_by_id,
     get_user_by_email,
     get_user_by_email_for_update,
     get_user_row_by_id,
     init_db,
     seed_db,
+    toggle_recurring,
+    update_recurring_next_date,
     update_user_password,
     update_user_profile,
 )
@@ -22,9 +31,12 @@ from database.queries import (
     delete_expense_record,
     get_category_breakdown,
     get_expense_by_id,
+    get_recurring_schedules,
     get_recent_transactions,
     get_summary_stats,
+    get_templates,
     get_user_by_id,
+    process_recurring_expenses,
     update_expense,
 )
 
@@ -106,6 +118,11 @@ def login():
 
         session["user_id"] = user["id"]
         session["user_name"] = user["name"]
+
+        added = process_recurring_expenses(user["id"])
+        if added:
+            flash(f"Auto-logged recurring expense(s): {', '.join(added)}", "success")
+
         return redirect(url_for("profile"))
 
     return render_template("login.html")
@@ -313,14 +330,267 @@ def add_expense():
                     "date": date_val,
                     "description": description or "",
                 },
+                templates=get_templates(session["user_id"]),
             )
 
         create_expense(session["user_id"], amount, category, date_val, description)
+
+        # Handle "save as template" checkbox
+        if request.form.get("save_template"):
+            tmpl_name = request.form.get("template_name", "").strip()
+            if tmpl_name and len(tmpl_name) <= 40:
+                create_template(session["user_id"], tmpl_name, amount, category, description)
+
         flash("Expense added successfully.", "success")
         return redirect(url_for("profile"))
 
-    # GET: default date to today
-    return render_template("add_expense.html", values={"date": date.today().isoformat()})
+    # GET: check for template_id to pre-fill
+    template_id = request.args.get("template_id", type=int)
+    template_prefill = None
+    if template_id:
+        template_prefill = get_template_by_id(template_id, session["user_id"])
+
+    default_values = {"date": date.today().isoformat()}
+    if template_prefill:
+        default_values["amount"] = str(template_prefill["amount"])
+        default_values["category"] = template_prefill["category"]
+        default_values["description"] = template_prefill["description"] or ""
+
+    return render_template(
+        "add_expense.html",
+        values=default_values,
+        templates=get_templates(session["user_id"]),
+    )
+
+
+# ------------------------------------------------------------------ #
+# Templates                                                           #
+# ------------------------------------------------------------------ #
+
+@app.route("/templates", methods=["GET", "POST"])
+def templates():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+
+    if request.method == "POST":
+        delete_id = request.form.get("delete_id", type=int)
+        if delete_id:
+            tmpl = get_template_by_id(delete_id, uid)
+            if tmpl:
+                delete_template(delete_id, uid)
+                flash("Template deleted.", "success")
+
+    all_templates = get_templates(uid)
+    return render_template("templates.html", templates=all_templates)
+
+
+@app.route("/templates/add", methods=["GET", "POST"])
+def add_template():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        amount_raw = request.form.get("amount", "").strip()
+        category = request.form.get("category", "").strip()
+        description = request.form.get("description", "").strip()
+
+        errors = []
+        if not name or len(name) > 40:
+            errors.append("Template name is required (max 40 characters).")
+        try:
+            amount = float(amount_raw)
+            if amount <= 0:
+                errors.append("Amount must be greater than zero.")
+        except ValueError:
+            errors.append("Please enter a valid amount.")
+        if category not in VALID_CATEGORIES:
+            errors.append("Please select a valid category.")
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            return render_template(
+                "add_template.html",
+                values={
+                    "name": name,
+                    "amount": amount_raw,
+                    "category": category,
+                    "description": description,
+                },
+            )
+
+        create_template(uid, name, amount, category, description or None)
+        flash("Template created.", "success")
+        return redirect(url_for("templates"))
+
+    # GET — pre-fill from query params if coming from add_expense save-as-template flow
+    values = {
+        "name": request.args.get("name", ""),
+        "amount": request.args.get("amount", ""),
+        "category": request.args.get("category", ""),
+        "description": request.args.get("description", ""),
+    }
+    return render_template("add_template.html", values=values)
+
+
+@app.route("/templates/<int:id>/use")
+def use_template(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+    tmpl = get_template_by_id(id, session["user_id"])
+    if not tmpl:
+        flash("Template not found.", "error")
+        return redirect(url_for("templates"))
+    return redirect(url_for("add_expense", template_id=id))
+
+
+@app.route("/templates/<int:id>/delete", methods=["POST"])
+def delete_template_route(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+    tmpl = get_template_by_id(id, session["user_id"])
+    if not tmpl:
+        flash("Template not found.", "error")
+        return redirect(url_for("templates"))
+    delete_template(id, session["user_id"])
+    flash("Template deleted.", "success")
+    return redirect(url_for("templates"))
+
+
+# ------------------------------------------------------------------ #
+# Recurring expenses                                                  #
+# ------------------------------------------------------------------ #
+
+@app.route("/recurring", methods=["GET"])
+def recurring():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    schedules = get_recurring_schedules(session["user_id"])
+    return render_template("recurring.html", recurring=schedules)
+
+
+@app.route("/recurring/add", methods=["GET", "POST"])
+def add_recurring():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    all_templates = get_templates(uid)
+
+    if request.method == "POST":
+        template_id_raw = request.form.get("template_id", "").strip()
+        frequency = request.form.get("frequency", "").strip()
+        start_date = request.form.get("start_date", "").strip()
+        description = request.form.get("description", "").strip()
+
+        errors = []
+
+        if template_id_raw:
+            try:
+                template_id = int(template_id_raw)
+                tmpl = get_template_by_id(template_id, uid)
+            except ValueError:
+                tmpl = None
+            if not tmpl:
+                errors.append("Please select a valid template.")
+        else:
+            template_id = None
+            errors.append("Please select a template.")
+
+        valid_freqs = ["daily", "weekly", "monthly"]
+        if frequency not in valid_freqs:
+            errors.append("Please select a frequency.")
+
+        try:
+            dt = datetime.strptime(start_date, "%Y-%m-%d")
+            if dt.date() > date.today():
+                errors.append("Start date cannot be in the future.")
+        except (ValueError, TypeError):
+            errors.append("Please select a valid start date.")
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            return render_template(
+                "add_recurring.html",
+                values={
+                    "template_id": template_id_raw,
+                    "frequency": frequency,
+                    "start_date": start_date,
+                    "description": description,
+                },
+                templates=all_templates,
+            )
+
+        create_recurring(uid, template_id, frequency, start_date, description or None)
+        flash("Recurring expense scheduled.", "success")
+        return redirect(url_for("recurring"))
+
+    # GET
+    return render_template(
+        "add_recurring.html",
+        values={"start_date": date.today().isoformat()},
+        templates=all_templates,
+    )
+
+
+@app.route("/recurring/<int:id>/run-now", methods=["POST"])
+def run_recurring_now(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    item = get_recurring_by_id(id, uid)
+    if not item:
+        flash("Recurring expense not found.", "error")
+        return redirect(url_for("recurring"))
+
+    today = date.today().isoformat()
+    desc = item["description"] if item["description"] else item["template_name"]
+    create_expense(uid, item["amount"], item["category"], today, desc)
+
+    advance_recurring(id, uid)
+
+    flash(f"'{item['template_name']}' logged for today.", "success")
+    return redirect(url_for("recurring"))
+
+
+@app.route("/recurring/<int:id>/toggle", methods=["POST"])
+def toggle_recurring_route(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    item = get_recurring_by_id(id, session["user_id"])
+    if not item:
+        flash("Recurring expense not found.", "error")
+        return redirect(url_for("recurring"))
+
+    toggle_recurring(id, session["user_id"])
+    status = "paused" if item["is_active"] else "active"
+    flash(f"Recurring expense is now {status}.", "success")
+    return redirect(url_for("recurring"))
+
+
+@app.route("/recurring/<int:id>/delete", methods=["POST"])
+def delete_recurring_route(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    item = get_recurring_by_id(id, uid)
+    if not item:
+        flash("Recurring expense not found.", "error")
+        return redirect(url_for("recurring"))
+
+    delete_recurring(id, uid)
+    flash("Recurring expense deleted.", "success")
+    return redirect(url_for("recurring"))
 
 
 @app.route("/expenses/<int:id>/edit", methods=["GET", "POST"])

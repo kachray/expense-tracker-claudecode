@@ -2,6 +2,48 @@
 
 {% block title %}Add Expense — Spendly{% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var picker    = document.getElementById('template-picker');
+    var amountEl  = document.getElementById('amount');
+    var catEl     = document.getElementById('category');
+    var descEl    = document.getElementById('description');
+    var saveTmplBox  = document.getElementById('save-template-box');
+    var saveTmplInput = document.getElementById('template-name-input');
+
+    // Pre-fill from query string params (used when redirected from /templates/<id>/use)
+    var params = new URLSearchParams(window.location.search);
+    if (params.has('amount'))   amountEl.value = params.get('amount');
+    if (params.has('category')) catEl.value  = params.get('category');
+    if (params.has('description')) descEl.value = params.get('description');
+
+    // Template picker: fill form on change
+    picker.addEventListener('change', function () {
+        var selected = picker.options[picker.selectedIndex];
+        if (!selected || !selected.dataset.amount) return;
+        amountEl.value  = selected.dataset.amount;
+        catEl.value    = selected.dataset.category;
+        descEl.value   = selected.dataset.description || '';
+
+        // Reset save-as-template when picker is used
+        saveTmplBox.checked = false;
+        saveTmplInput.style.display = 'none';
+    });
+
+    // Save-as-template checkbox toggles the name input
+    saveTmplBox.addEventListener('change', function () {
+        saveTmplInput.style.display = saveTmplBox.checked ? 'block' : 'none';
+        if (saveTmplBox.checked) saveTmplInput.focus();
+    });
+});
+</script>
+{% endblock %}
+
 {% block content %}
 
 <section class="auth-section">
@@ -20,6 +62,24 @@
             {% endwith %}
 
             <form method="POST" action="{{ url_for('add_expense') }}">
+                {% if templates %}
+                <div class="form-group">
+                    <label for="template-picker">Use a template</label>
+                    <select id="template-picker" class="form-input">
+                        <option value="">— Select a saved template —</option>
+                        {% for t in templates %}
+                        <option value="{{ t.id }}"
+                                data-amount="{{ t.amount }}"
+                                data-category="{{ t.category }}"
+                                data-description="{{ t.description or '' }}">
+                            {{ t.name }} — ₹{{ t.amount }} — {{ t.category }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-divider"></div>
+                {% endif %}
+
                 <div class="form-group">
                     <label for="amount">Amount</label>
                     <input type="number" id="amount" name="amount"
@@ -55,11 +115,24 @@
                            maxlength="200"
                            value="{{ values.description or '' }}">
                 </div>
+
                 <button type="submit" class="btn-submit">Save Expense</button>
+
+                {# Save as template #}
+                <div class="save-template-row">
+                    <input type="checkbox" id="save-template-box" name="save_template" value="1">
+                    <label for="save-template-box" class="save-template-label">Save as template</label>
+                    <input type="text" id="template-name-input" name="template_name"
+                           class="form-input save-template-name"
+                           placeholder="Template name (e.g. Netflix)"
+                           maxlength="40" style="display:none">
+                </div>
             </form>
         </div>
 
         <p class="auth-switch">
+            <a href="{{ url_for('templates') }}">My templates</a>
+            &nbsp;·&nbsp;
             <a href="{{ url_for('profile') }}">Cancel — back to profile</a>
         </p>
 
