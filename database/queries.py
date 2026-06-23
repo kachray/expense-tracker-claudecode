@@ -1,6 +1,14 @@
-from datetime import datetime
+from datetime import datetime, date
 
-from database.db import get_db
+from database.db import (
+    advance_recurring,
+    create_expense,
+    get_db,
+    get_due_recurring,
+    get_recurring_for_user,
+    get_template_by_id,
+    get_templates_for_user,
+)
 
 
 def _build_date_filter(date_from, date_to):
@@ -181,3 +189,58 @@ def get_category_breakdown(user_id, date_from=None, date_to=None, search=None):
         }
         for r, pct in zip(rows, pcts)
     ]
+
+
+def get_templates(user_id):
+    rows = get_templates_for_user(user_id)
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "amount": "{:,.2f}".format(row["amount"]),
+            "category": row["category"],
+            "description": row["description"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_recurring_schedules(user_id):
+    rows = get_recurring_for_user(user_id)
+    return [
+        {
+            "id": row["id"],
+            "template_id": row["template_id"],
+            "template_name": row["name"],
+            "amount": "{:,.2f}".format(row["amount"]),
+            "category": row["category"],
+            "frequency": row["frequency"],
+            "next_run_date": row["next_run_date"],
+            "description": row["description"],
+            "is_active": bool(row["is_active"]),
+        }
+        for row in rows
+    ]
+
+
+def process_recurring_expenses(user_id):
+    """
+    Process all due recurring expenses for a user.
+    Creates real expense rows and advances next_run_date.
+    Returns a list of human-readable names of what was added.
+    """
+    due = get_due_recurring(user_id)
+    if not due:
+        return []
+
+    added = []
+    today = date.today().isoformat()
+    for item in due:
+        # description: use recurring-level override, else template name
+        desc = item["description"] if item["description"] else item["name"]
+        create_expense(user_id, item["amount"], item["category"], today, desc)
+        # advance by recurring id (item["id"] is the recurring_expenses pk)
+        advance_recurring(item["id"], user_id)
+        added.append(f"{item['name']} ({item['amount']})")
+    return added
