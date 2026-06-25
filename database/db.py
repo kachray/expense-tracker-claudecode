@@ -337,6 +337,18 @@ def toggle_recurring(rec_id, user_id):
     conn.close()
 
 
+def update_recurring(rec_id, user_id, template_id, frequency, next_run_date, description):
+    conn = get_db()
+    conn.execute(
+        "UPDATE recurring_expenses "
+        "SET template_id=?, frequency=?, next_run_date=?, description=? "
+        "WHERE id=? AND user_id=?",
+        (template_id, frequency, next_run_date, description or None, rec_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def delete_recurring(rec_id, user_id):
     conn = get_db()
     conn.execute(
