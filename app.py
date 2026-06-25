@@ -22,6 +22,7 @@ from database.db import (
     init_db,
     seed_db,
     toggle_recurring,
+    update_recurring,
     update_recurring_next_date,
     update_user_password,
     update_user_profile,
@@ -536,6 +537,80 @@ def add_recurring():
     return render_template(
         "add_recurring.html",
         values={"start_date": date.today().isoformat()},
+        templates=all_templates,
+    )
+
+
+@app.route("/recurring/<int:id>/edit", methods=["GET", "POST"])
+def edit_recurring(id):
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    uid = session["user_id"]
+    item = get_recurring_by_id(id, uid)
+    if not item:
+        flash("Recurring expense not found.", "error")
+        return redirect(url_for("recurring"))
+
+    all_templates = get_templates(uid)
+
+    if request.method == "POST":
+        template_id_raw = request.form.get("template_id", "").strip()
+        frequency = request.form.get("frequency", "").strip()
+        next_run_date = request.form.get("next_run_date", "").strip()
+        description = request.form.get("description", "").strip()
+
+        errors = []
+
+        if template_id_raw:
+            try:
+                template_id = int(template_id_raw)
+                tmpl = get_template_by_id(template_id, uid)
+            except ValueError:
+                tmpl = None
+            if not tmpl:
+                errors.append("Please select a valid template.")
+        else:
+            errors.append("Please select a template.")
+
+        valid_freqs = ["daily", "weekly", "monthly"]
+        if frequency not in valid_freqs:
+            errors.append("Please select a frequency.")
+
+        try:
+            dt = datetime.strptime(next_run_date, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            errors.append("Please select a valid date.")
+
+        if errors:
+            for err in errors:
+                flash(err, "error")
+            return render_template(
+                "edit_recurring.html",
+                recurring=item,
+                values={
+                    "template_id": template_id_raw,
+                    "frequency": frequency,
+                    "next_run_date": next_run_date,
+                    "description": description,
+                },
+                templates=all_templates,
+            )
+
+        update_recurring(id, uid, int(template_id_raw), frequency, next_run_date, description or None)
+        flash("Recurring expense updated.", "success")
+        return redirect(url_for("recurring"))
+
+    # GET — pre-fill with current values
+    return render_template(
+        "edit_recurring.html",
+        recurring=item,
+        values={
+            "template_id": str(item["template_id"]),
+            "frequency": item["frequency"],
+            "next_run_date": item["next_run_date"],
+            "description": item["description"] or "",
+        },
         templates=all_templates,
     )
 

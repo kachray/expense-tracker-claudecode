@@ -212,7 +212,7 @@ def get_recurring_schedules(user_id):
         {
             "id": row["id"],
             "template_id": row["template_id"],
-            "template_name": row["name"],
+            "template_name": row["template_name"],
             "amount": "{:,.2f}".format(row["amount"]),
             "category": row["category"],
             "frequency": row["frequency"],
