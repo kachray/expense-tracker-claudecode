@@ -28,7 +28,7 @@
                         <option value="">Select a template</option>
                         {% for t in templates %}
                         <option value="{{ t.id }}"{% if values.template_id == t.id|string %} selected{% endif %}>
-                            {{ t.name }} — {{ t.amount }} — {{ t.category }}
+                            {{ t.name }} — ₹{{ t.amount }} — {{ t.category }}
                         </option>
                         {% endfor %}
                     </select>
@@ -65,7 +65,7 @@
         </div>
 
         <p class="auth-switch">
-            <a href="{{ url_for('recurring') }}">Cancel — back to recurring</a>
+            <a href="{{ url_for('recurring') }}">← Back to recurring expenses</a>
         </p>
     </div>
 </section>
