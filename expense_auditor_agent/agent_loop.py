@@ -1,130 +1,162 @@
 """
 expense_auditor_agent/agent_loop.py
 ====================================
-Standalone receipt auditor script.
-Polls incoming_receipts/ for new image/PDF files, sends them to a
-miniMax/m2.7 vision endpoint via the OpenAI SDK over an NVIDIA NIM
-proxy, then prompts for human confirmation before writing to the
-Spendly SQLite database.
+LangGraph-based receipt auditor.
+Polls incoming_receipts/, extracts expense data via Groq vision model,
+previews to human for approval, then commits to Spendly SQLite db.
 """
 
 import os
 import sys
+import json
 import time
 import base64
-import json
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
+import groq  # raw groq client -- confirmed free Groq tier compatible
+
+from pydantic import BaseModel, Field
+
 # ------------------------------------------------------------------ #
-# OpenAI SDK client                                                   #
+# Groq client (raw, not langchain-groq -- avoids version conflicts)  #
 # ------------------------------------------------------------------ #
-try:
-    from openai import OpenAI
-except ImportError:
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+if not GROQ_API_KEY:
     sys.stderr.write(
-        "[ERROR] 'openai' package not found.  Install it with:\n"
-        "  pip install openai pillow\n"
+        "[ERROR] GROQ_API_KEY not set in .env or environment.\n"
+        "  Get a free key at https://console.groq.com/keys\n"
     )
     sys.exit(1)
 
 # ------------------------------------------------------------------ #
-# Image processing                                                    #
+# Retry helper                                                        #
 # ------------------------------------------------------------------ #
-try:
-    from PIL import Image
-except ImportError:
+
+def _groq_with_retry(fn, *args, max_retries=3, **kwargs):
+    """
+    Call fn(*args, **kwargs) up to max_retries times with exponential
+    backoff. Specifically handles groq timeout errors.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except groq.RateLimitError as exc:
+            wait = 2 ** attempt
+            print(f"[RETRY] Rate limited -- waiting {wait}s before retry {attempt}/{max_retries}")
+            time.sleep(wait)
+        except groq.APIConnectionError as exc:
+            wait = 2 ** attempt
+            print(f"[RETRY] Connection error -- waiting {wait}s before retry {attempt}/{max_retries}")
+            time.sleep(wait)
+        except Exception as exc:
+            # Don't retry on unexpected errors -- fail fast
+            raise
+    raise RuntimeError(f"Groq call failed after {max_retries} retries")
+
+
+# ------------------------------------------------------------------ #
+# Groq client (raw, not langchain-groq -- avoids version conflicts)  #
+# ------------------------------------------------------------------ #
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+if not GROQ_API_KEY:
     sys.stderr.write(
-        "[ERROR] 'Pillow' package not found.  Install it with:\n"
-        "  pip install pillow\n"
+        "[ERROR] GROQ_API_KEY not set in .env or environment.\n"
+        "  Get a free key at https://console.groq.com/keys\n"
     )
     sys.exit(1)
 
-# ------------------------------------------------------------------ #
-# Import create_expense from the parent project's db module           #
-# ------------------------------------------------------------------ #
-# Build the path to the main project's database.db (sibling to this folder)
-_AGENT_DIR = Path(__file__).resolve().parent          # .../expense_auditor_agent/
-_PROJECT_ROOT = _AGENT_DIR.parent                      # .../spendly/
-_PARENT_DB_PATH = _PROJECT_ROOT / "database" / "db.py"
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.2-11b-vision-preview")
+GROQ_TIMEOUT = float(os.environ.get("GROQ_TIMEOUT", "60"))  # seconds
+POLL_INTERVAL = float(os.environ.get("AUDITOR_POLL_INTERVAL", "5"))
 
-if not _PARENT_DB_PATH.exists():
-    sys.stderr.write(
-        f"[ERROR] Spendly database module not found at {_PARENT_DB_PATH}\n"
-    )
-    sys.exit(1)
+client = groq.Groq(api_key=GROQ_API_KEY)
 
-# Prepend project root so the db module resolves correctly
+# ------------------------------------------------------------------ #
+# Spendly DB path                                                    #
+# ------------------------------------------------------------------ #
+
+_AGENT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _AGENT_DIR.parent
+DB_PATH = _PROJECT_ROOT / "spendly.db"
+
 sys.path.insert(0, str(_PROJECT_ROOT))
 from database.db import create_expense, get_db
 
 # ------------------------------------------------------------------ #
-# Configuration                                                       #
-# ------------------------------------------------------------------ #
-INCOMING_DIR = _AGENT_DIR / "incoming_receipts"
-
-# NIM proxy / gateway
-NIM_BASE_URL = os.environ.get("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/")
-# API key — required when targeting NVIDIA NIM; optional for other proxies
-NIM_API_KEY = os.environ.get("NIM_API_KEY", "").strip() or "not-supplied"
-
-# Vision model identifier.
-# Default matches MiniMax's m2.7-flash vision chat model on NIM.
-# Override with NIM_MODEL env var.
-NIM_MODEL = os.environ.get("NIM_MODEL", "minimaxi/minimax-2.7-flash")
-
-POLL_INTERVAL_SECONDS = float(os.environ.get("AUDITOR_POLL_INTERVAL", "5"))
-
-# The 7 categories accepted by spendly (must match app.py VALID_CATEGORIES)
-VALID_CATEGORIES = ["Food", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other"]
-
-# Resolved at runtime
-AUDITOR_USER_ID: Optional[int] = None
-
-
-# ------------------------------------------------------------------ #
-# Helpers                                                             #
+# Valid categories (must match app.py VALID_CATEGORIES)             #
 # ------------------------------------------------------------------ #
 
-def _get_or_create_auditor_user() -> int:
-    """Resolve the auditor's user id — uses the seeded demo user if present."""
-    global AUDITOR_USER_ID
-    if AUDITOR_USER_ID is not None:
-        return AUDITOR_USER_ID
+VALID_CATEGORIES = [
+    "Food", "Transport", "Bills", "Health",
+    "Entertainment", "Shopping", "Other",
+]
 
+# ------------------------------------------------------------------ #
+# Pydantic state schema                                               #
+# ------------------------------------------------------------------ #
+
+from enum import StrEnum
+
+class ProcessingStatus(StrEnum):
+    PENDING   = "pending"
+    EXTRACTED = "extracted"
+    APPROVED  = "approved"
+    REJECTED  = "rejected"
+    SAVED     = "saved"
+    ERROR     = "error"
+
+
+class ExtractedData(BaseModel):
+    amount:      Optional[float] = None
+    category:    Optional[str]  = None
+    date:        Optional[str]  = None
+    description: Optional[str]  = None
+
+
+class AgentState(BaseModel):
+    file_path:        Optional[str]        = None
+    raw_image_base64: Optional[str]        = None
+    file_name:        Optional[str]        = None
+    extracted_data:   Optional[ExtractedData] = None
+    status:           ProcessingStatus     = ProcessingStatus.PENDING
+    approved:         bool                 = False
+    user_id:          int                  = 1
+    error_message:    Optional[str]        = None
+
+# ------------------------------------------------------------------ #
+# Helpers                                                            #
+# ------------------------------------------------------------------ #
+
+def _resolve_user_id() -> int:
     conn = get_db()
     row = conn.execute(
         "SELECT id FROM users WHERE email = ?", ("demo@spendly.com",)
     ).fetchone()
     conn.close()
-
     if row:
-        AUDITOR_USER_ID = row["id"]
-        print(f"[INFO] Auditor will log expenses under user id {AUDITOR_USER_ID} (demo@spendly.com).")
-        return AUDITOR_USER_ID
-
-    # No demo user — use the first user in the DB, or abort
+        print(f"[INFO] Logging expenses under user id {row['id']} (demo@spendly.com).")
+        return row["id"]
     conn = get_db()
     row = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
     conn.close()
-
     if not row:
-        sys.stderr.write(
-            "[ERROR] No users found in the database.  Create a user in Spendly first.\n"
-        )
+        sys.stderr.write("[ERROR] No users in Spendly DB. Create one at http://localhost:5001/register\n")
         sys.exit(1)
-
-    AUDITOR_USER_ID = row["id"]
-    print(f"[INFO] Auditor will log expenses under user id {AUDITOR_USER_ID}.")
-    return AUDITOR_USER_ID
+    print(f"[INFO] Logging expenses under user id {row['id']}.")
+    return row["id"]
 
 
 def _poll_files() -> list[Path]:
-    """Return image/PDF files in INCOMING_DIR sorted by mtime (oldest first)."""
     if not INCOMING_DIR.is_dir():
         INCOMING_DIR.mkdir(parents=True, exist_ok=True)
-
     supported = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"}
     files = [
         p for p in INCOMING_DIR.iterdir()
@@ -134,272 +166,382 @@ def _poll_files() -> list[Path]:
     return files
 
 
-def _load_image(path: Path) -> Image.Image:
-    """Load any image file (including PDF pages) with Pillow."""
-    try:
-        img = Image.open(path)
-        # PDF pages come back as mode "1" or "RGB" — convert to RGB for encoding
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        return img
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load image {path}: {exc}") from exc
-
-
-def _image_to_base64_url(img: Image.Image, fmt: str = "PNG") -> str:
-    """
-    Encode a Pillow Image as a base64 data URL of the given format.
-    OpenAI vision expects format:  data:image/<fmt>;base64,<base64_data>
-    """
+def _load_image(path: Path) -> str:
+    """Load any image/PDF with Pillow, return base64 PNG string."""
+    from PIL import Image
+    img = Image.open(path)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
     buf = BytesIO()
-    img.save(buf, format=fmt)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/{fmt.lower()};base64,{b64}"
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-# ------------------------------------------------------------------ #
-# Vision prompt                                                       #
-# ------------------------------------------------------------------ #
-
-VISION_SYSTEM_PROMPT = f"""\
-You are a receipt-parsing assistant.  Your task is to extract structured
-expense data from a receipt image or PDF page.  Return ONLY a JSON object
-with these exact fields and nothing else:
-
-{{
-  "amount": <float — the total amount charged>,
-  "category": <one of: {", ".join(VALID_CATEGORIES)}>,
-  "date": <YYYY-MM-DD — the date on the receipt>,
-  "description": <a short text description of what was purchased, or null>
-}}
-
-Rules:
-- amount: parse any currency symbols or commas; return as a plain float
-- category: pick the single best match from the allowed list above
-- date: use the date printed on the receipt; if not clearly visible,
-  use today's date ({date.today().isoformat()})
-- description: summarise the merchant / purchase in ≤ 80 characters;
-  use null if the receipt is illegible or contains no useful text
-- Do NOT include any markdown fences, code blocks, or extra commentary.
-  Return only the raw JSON object.
-"""
+def _processed_name(path: Path) -> Path:
+    return path.with_name(path.name + ".processed")
 
 
-from io import BytesIO
-
-
-def _extract_with_nim(image_path: Path) -> dict:
-    """
-    Load the image/PDF with Pillow and send it to the NIM vision endpoint
-    using the standard OpenAI vision payload format.
-    """
-    ext = image_path.suffix.lower()
-
-    # Determine MIME type and Pillow format for encoding
-    if ext == ".pdf":
-        # Try to render the first page of the PDF
-        try:
-            img = _load_image(image_path)
-        except Exception as exc:
-            raise RuntimeError(
-                f"Could not open PDF {image_path.name}.  "
-                "Is the file a valid PDF?  Error: " + str(exc)
-            ) from exc
-        mime = "image/png"   # PDFs are rendered as PNG
-        fmt = "PNG"
-    elif ext in (".gif", ".webp"):
-        # PIL can load these but saving as PNG is safer for base64 round-trip
-        img = _load_image(image_path)
-        mime = f"image/{ext.strip('.')}"
-        fmt = "PNG"
-    else:
-        img = _load_image(image_path)
-        # Infer MIME from suffix
-        mime_map = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".bmp": "image/bmp",
-        }
-        mime = mime_map.get(ext, "image/png")
-        fmt = "PNG" if ext == ".png" else "JPEG"
-
-    # Build the base64 data URL — OpenAI vision standard format
-    image_data_url = _image_to_base64_url(img, fmt=fmt)
-
-    file_size = image_path.stat().st_size
-    print(f"[DEBUG] Sending {image_path.name} ({file_size:,} bytes, {mime}) to {NIM_MODEL} at {NIM_BASE_URL} …")
-
-    # ------------------------------------------------------------------ #
-    # OpenAI SDK client — targets the NIM proxy                           #
-    # ------------------------------------------------------------------ #
-    client = OpenAI(
-        base_url=NIM_BASE_URL,
-        api_key=NIM_API_KEY,
-    )
-
-    response = client.chat.completions.create(
-        model=NIM_MODEL,
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "system",
-                "content": VISION_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data_url,
-                            "detail": "high",
-                        },
-                    }
-                ],
-            }
-        ],
-    )
-
-    raw = response.choices[0].message.content.strip()
-    print(f"[DEBUG] Raw model response:\n{raw}\n")
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Model did not return valid JSON: {exc}\nResponse was: {raw}") from exc
-
-    # Validate required keys
-    for key in ("amount", "category", "date", "description"):
-        if key not in data:
-            raise RuntimeError(f"Model response missing required key '{key}'.")
-
-    return data
-
-
-def _normalise_category(category: str) -> str:
-    """Case-insensitive match against VALID_CATEGORIES; fall back to 'Other'."""
+def _normalise_category(raw: str) -> str:
+    if not raw:
+        return "Other"
     for valid in VALID_CATEGORIES:
-        if valid.lower() == category.lower():
+        if valid.lower() == raw.lower():
             return valid
-    # Try substring match
     for valid in VALID_CATEGORIES:
-        if valid.lower() in category.lower():
+        if valid.lower() in raw.lower():
             return valid
-    print(f"[WARN] Could not match category '{category}' — defaulting to 'Other'.")
+    print(f"[WARN] Category '{raw}' not recognised -- defaulting to 'Other'.")
     return "Other"
 
 
 # ------------------------------------------------------------------ #
-# Human-in-the-loop validation                                        #
+# LangGraph nodes                                                     #
 # ------------------------------------------------------------------ #
 
-def _prompt_user(data: dict) -> bool:
+def extract_receipt_node(state: AgentState) -> dict:
     """
-    Print extracted data and ask for confirmation.
-    Returns True if user types 'y' / 'Y', False for 'n' / 'N'.
+    Load image, send to Groq vision model with a structured JSON prompt,
+    parse and return ExtractedData.
     """
-    print("\n" + "=" * 55)
+    path = Path(state.file_path) if state.file_path else None
+    if not path or not path.exists():
+        return {"status": ProcessingStatus.ERROR, "error_message": f"File not found: {state.file_path}"}
+
+    print(f"\n[EXTRACT] Processing: {path.name}")
+
+    try:
+        b64 = _load_image(path)
+    except Exception as exc:
+        return {"status": ProcessingStatus.ERROR, "error_message": f"Image load failed: {exc}"}
+
+    prompt = f"""\
+You are a receipt-parsing assistant. Return ONLY valid JSON with these exact fields -- no markdown, no explanation:
+
+{{
+  "amount": <float>,
+  "category": <one of: {", ".join(VALID_CATEGORIES)}>,
+  "date": "<YYYY-MM-DD>",
+  "description": "<string or null>"
+}}
+
+Rules:
+- amount: strip currency symbols/commas, return plain float. Use 0.0 if unreadable.
+- category: pick the single best match from the allowed list above.
+- date: use the date on the receipt or today's date (2026-06-29) if absent.
+- description: summarise merchant/purchase in 80 chars or less, or use null.
+- Return ONLY raw JSON.
+"""
+
+    today = date.today().isoformat()
+    prompt = prompt.replace("2026-06-29", today)
+
+    def _call():
+        return client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{b64}",
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=512,
+            temperature=0.3,
+            timeout=GROQ_TIMEOUT,
+        )
+
+    try:
+        response = _groq_with_retry(_call, max_retries=2)
+    except Exception as exc:
+        return {"status": ProcessingStatus.ERROR, "error_message": f"Groq API call failed after retries: {exc}"}
+
+    raw = ""
+    try:
+        raw = response.choices[0].message.content.strip()
+    except (AttributeError, IndexError):
+        return {"status": ProcessingStatus.ERROR, "error_message": "Empty response from Groq."}
+
+    print(f"[DEBUG] LLM raw response:\n{raw}\n")
+
+    if not raw:
+        return {"status": ProcessingStatus.ERROR, "error_message": "LLM returned empty content."}
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {
+            "status": ProcessingStatus.ERROR,
+            "error_message": f"LLM returned invalid JSON: {exc}\nRaw: {raw[:200]}",
+        }
+
+    # Normalise amount
+    amount_val = data.get("amount")
+    if amount_val is None:
+        amount = None
+    else:
+        try:
+            amount = float(amount_val)
+        except (ValueError, TypeError):
+            amount = None
+
+    # Normalise category
+    raw_date = data.get("date") or date.today().isoformat()
+
+    extracted = ExtractedData(
+        amount=amount,
+        category=data.get("category"),
+        date=raw_date,
+        description=data.get("description"),
+    )
+
+    print(
+        f"[EXTRACT] amount={extracted.amount}, category={extracted.category}, "
+        f"date={extracted.date}, description={extracted.description}"
+    )
+
+    return {
+        "raw_image_base64": b64,
+        "extracted_data": extracted,
+        "status": ProcessingStatus.EXTRACTED,
+        "error_message": None,
+    }
+
+
+def validate_data_node(state: AgentState) -> dict:
+    """Normalise category against Spendly's 7 allowed categories."""
+    ed = state.extracted_data
+    if ed is None:
+        return {"status": ProcessingStatus.ERROR, "error_message": "No extracted data to validate."}
+
+    normalised = _normalise_category(ed.category or "")
+
+    validated = ExtractedData(
+        amount=ed.amount,
+        category=normalised,
+        date=ed.date or date.today().isoformat(),
+        description=ed.description,
+    )
+
+    print(f"[VALIDATE] '{ed.category}' -> '{normalised}'")
+
+    return {
+        "extracted_data": validated,
+        "status": ProcessingStatus.EXTRACTED,
+    }
+
+
+def human_approval_node(state: AgentState) -> dict:
+    """
+    Block and prompt human for y/n approval.
+    y -> status = APPROVED, approved = True
+    n -> status = REJECTED, approved = False
+    """
+    data = state.extracted_data
+    if data is None:
+        return {"status": ProcessingStatus.ERROR, "error_message": "No data to present for approval."}
+
+    print("\n" + "=" * 56)
     print("  EXTRACTED RECEIPT DATA")
-    print("=" * 55)
-    print(f"  Amount:      {data['amount']:.2f}")
-    print(f"  Category:    {data['category']}")
-    print(f"  Date:        {data['date']}")
-    desc = data["description"] if data["description"] else "(none)"
-    print(f"  Description: {desc}")
-    print("=" * 55)
+    print("=" * 56)
+    amt_str = f"{data.amount:.2f}" if data.amount is not None else "--"
+    print(f"  Amount:      {amt_str}")
+    print(f"  Category:    {data.category or '--'}")
+    print(f"  Date:        {data.date or '--'}")
+    print(f"  Description: {data.description or '(none)'}")
+    print("=" * 56)
+    print(f"  File:        {state.file_name or state.file_path or ''}")
+    print("=" * 56)
     print()
 
     while True:
-        response = input("Do you want to log this expense? (y/n): ").strip()
+        response = input("Log this expense? (y = approve / n = reject): ").strip()
         if response in ("y", "Y"):
-            return True
+            print("[APPROVED] Proceeding to save.\n")
+            return {"status": ProcessingStatus.APPROVED, "approved": True}
         if response in ("n", "N"):
-            return False
-        print("Please enter 'y' or 'n'.")
+            print("[REJECTED] Expense will not be saved.\n")
+            return {"status": ProcessingStatus.REJECTED, "approved": False}
+        print("Enter 'y' to approve or 'n' to reject.")
+
+
+def save_to_db_node(state: AgentState) -> dict:
+    """
+    Commit approved expense to Spendly SQLite.
+    Only run if human_approval_node set approved=True.
+    """
+    if not state.approved:
+        return {"status": ProcessingStatus.REJECTED}
+
+    data = state.extracted_data
+    if data is None or data.amount is None or data.amount <= 0:
+        return {"status": ProcessingStatus.ERROR, "error_message": "Invalid or missing amount -- cannot save."}
+
+    try:
+        uid = state.user_id or _resolve_user_id()
+        expense_id = create_expense(
+            user_id=uid,
+            amount=float(data.amount),
+            category=data.category,
+            date=data.date,
+            description=data.description,
+        )
+        print(
+            f"[DB] Saved -- id={expense_id}, amount={data.amount}, "
+            f"category={data.category}, date={data.date}"
+        )
+        return {"status": ProcessingStatus.SAVED}
+    except Exception as exc:
+        return {"status": ProcessingStatus.ERROR, "error_message": f"Database write failed: {exc}"}
+
+
+def error_handler_node(state: AgentState) -> dict:
+    print(f"[ERROR] {state.error_message or 'Unknown error'}")
+    return {"status": ProcessingStatus.ERROR}
 
 
 # ------------------------------------------------------------------ #
-# Processed-file tracking                                             #
+# Conditional routing                                                #
 # ------------------------------------------------------------------ #
 
-def _processed_name(path: Path) -> Path:
-    """Return path with '.processed' appended."""
-    return path.with_name(path.name + ".processed")
+def route_after_validate(state: AgentState) -> str:
+    if state.status == ProcessingStatus.ERROR:
+        return "error_handler"
+    return "human_approval"
+
+
+def route_after_approval(state: AgentState) -> str:
+    if state.approved:
+        return "save_to_db"
+    return "__end__"
+
+
+def route_after_save(state: AgentState) -> str:
+    return "__end__"
 
 
 # ------------------------------------------------------------------ #
-# Entry point                                                         #
+# Build LangGraph StateGraph                                          #
 # ------------------------------------------------------------------ #
+
+def build_graph():
+    from langgraph.graph import StateGraph, END
+
+    builder = StateGraph(AgentState)
+
+    builder.add_node("extract_receipt",  extract_receipt_node)
+    builder.add_node("validate_data",    validate_data_node)
+    builder.add_node("human_approval",   human_approval_node)
+    builder.add_node("save_to_db",       save_to_db_node)
+    builder.add_node("error_handler",    error_handler_node)
+
+    builder.add_edge("extract_receipt", "validate_data")
+
+    builder.add_conditional_edges(
+        "validate_data",
+        route_after_validate,
+        {
+            "error_handler": "error_handler",
+            "human_approval": "human_approval",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "human_approval",
+        route_after_approval,
+        {
+            "save_to_db": "save_to_db",
+            "__end__": END,
+        },
+    )
+
+    builder.add_edge("save_to_db", END)
+    builder.add_edge("error_handler", END)
+
+    builder.set_entry_point("extract_receipt")
+
+    return builder.compile(debug=False)
+
+
+# ------------------------------------------------------------------ #
+# Polling + orchestration                                             #
+# ------------------------------------------------------------------ #
+
+INCOMING_DIR = _AGENT_DIR / "incoming_receipts"
+
+
+def process_file(graph, path: Path, user_id: int) -> bool:
+    """Run graph for one receipt file. Returns True if no ERROR occurred."""
+    initial_state = AgentState(
+        file_path=str(path),
+        file_name=path.name,
+        user_id=user_id,
+        status=ProcessingStatus.PENDING,
+    )
+
+    print(f"\n[GRAPH] Starting pipeline for: {path.name}")
+
+    try:
+        result = graph.invoke(initial_state)
+    except Exception as exc:
+        sys.stderr.write(f"[GRAPH] Invocation error: {exc}\n")
+        try:
+            path.rename(_processed_name(path))
+        except OSError:
+            pass
+        return False
+
+    final_status = result.get("status", ProcessingStatus.ERROR)
+    print(f"[GRAPH] Finished: {path.name} -> {final_status}")
+
+    if final_status == ProcessingStatus.SAVED:
+        print(f"[OK] {path.name} saved to database.")
+    elif final_status == ProcessingStatus.REJECTED:
+        print(f"[SKIP] {path.name} -- human rejected.")
+    elif final_status == ProcessingStatus.ERROR:
+        print(f"[ERR] {path.name} -- {result.get('error_message', 'unknown error')}")
+
+    try:
+        path.rename(_processed_name(path))
+    except OSError:
+        pass
+
+    return final_status != ProcessingStatus.ERROR
+
 
 def run():
-    print("\n============================================================")
-    print("  Spendly Receipt Auditor Agent  (Ctrl-C to stop)")
-    print("============================================================")
-    print(f"  Incoming folder : {INCOMING_DIR}")
-    print(f"  Database        : {_PROJECT_ROOT / 'spendly.db'}")
-    print(f"  NIM base URL    : {NIM_BASE_URL}")
-    print(f"  Model           : {NIM_MODEL}")
-    print(f"  API key set     : {'yes' if NIM_API_KEY and NIM_API_KEY != 'not-supplied' else 'no'}")
-    print(f"  Poll interval   : {POLL_INTERVAL_SECONDS}s")
-    print("============================================================\n")
+    print("\n" + "=" * 60)
+    print("  Spendly Receipt Auditor -- LangGraph Edition")
+    print("  Ctrl-C to stop")
+    print("=" * 60)
+    print(f"  Incoming   : {INCOMING_DIR}")
+    print(f"  Database   : {DB_PATH}")
+    print(f"  Groq model : {GROQ_MODEL}")
+    print(f"  Groq key   : {'[OK]' if GROQ_API_KEY else '[MISSING]'}")
+    print(f"  Groq timeout: {GROQ_TIMEOUT}s")
+    print(f"  Poll every : {POLL_INTERVAL}s")
+    print("=" * 60 + "\n")
 
-    _get_or_create_auditor_user()
-
-    print(f"[INFO] Watching {INCOMING_DIR} for new receipts …\n")
+    uid = _resolve_user_id()
+    graph = build_graph()
+    print("[INFO] Graph compiled. Watching for receipts ...\n")
 
     while True:
         try:
-            files = _poll_files()
-            for path in files:
-                # Skip already-processed files (identified by .processed suffix)
+            for path in _poll_files():
                 if path.suffix == ".processed":
                     continue
-
-                print(f"\n[NEW FILE] {path.name}")
-
-                try:
-                    data = _extract_with_nim(path)
-                except Exception as exc:
-                    sys.stderr.write(f"[ERROR] Vision extraction failed for {path.name}: {exc}\n")
-                    # Rename to .processed so corrupt/unreadable files are not retried
-                    try:
-                        path.rename(_processed_name(path))
-                    except OSError:
-                        pass
-                    continue
-
-                # Normalise category to a valid Spendly category
-                data["category"] = _normalise_category(data.get("category", ""))
-
-                # Human-in-the-loop confirmation
-                confirmed = _prompt_user(data)
-
-                if confirmed:
-                    uid = _get_or_create_auditor_user()
-                    expense_id = create_expense(
-                        user_id=uid,
-                        amount=float(data["amount"]),
-                        category=data["category"],
-                        date=data["date"],
-                        description=data.get("description"),
-                    )
-                    print(f"[OK] Expense logged with id={expense_id}.")
-                    try:
-                        path.rename(_processed_name(path))
-                    except OSError:
-                        pass
-                else:
-                    print(f"[SKIP] Expense NOT logged.  Moving {path.name} to processed anyway.")
-                    try:
-                        path.rename(_processed_name(path))
-                    except OSError:
-                        pass
-
-            time.sleep(POLL_INTERVAL_SECONDS)
-
+                process_file(graph, path, uid)
+            time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
-            print("\n[INFO] Shutting down auditor agent.")
+            print("\n[INFO] Shutdown requested -- exiting.")
             break
 
 
